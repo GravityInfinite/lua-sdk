@@ -100,11 +100,13 @@ end
 --- Construct debug consumer
 ---@param self any
 ---@param url string Project url
-GEAnalytics.GEDebugConsumer = class(function(self, url)
+---@param callback function Global error callback, invoked when report failed; receives (err, client_id)
+GEAnalytics.GEDebugConsumer = class(function(self, url, callback)
     if url == nil or type(url) ~= "string" or string.len(url) == 0 then
         GELog.error("server url can't be empty.")
     end
     self.url = url
+    self.callback = callback
     GEAnalytics.strictMode = true
     GELog.info("Mode: debug consumer.  ReceiverUrl: " .. url)
 end)
@@ -114,7 +116,21 @@ function GEAnalytics.GEDebugConsumer:add(msg)
     if (returnCode == 0) then
         return true
     end
+    self:reportError("report failed, returnCode: " .. tostring(returnCode) .. ", httpCode: " .. tostring(code),
+        msg and msg["client_id"] or nil)
     return false
+end
+
+--- Invoke the global error callback when report failed
+---@param err string|table error
+---@param clientId string|nil
+function GEAnalytics.GEDebugConsumer:reportError(err, clientId)
+    if self.callback ~= nil then
+        local ok, callbackErr = pcall(self.callback, err, clientId)
+        if not ok then
+            GELog.error("error callback failed: " .. tostring(callbackErr))
+        end
+    end
 end
 
 function GEAnalytics.GEDebugConsumer:flush()
@@ -129,7 +145,8 @@ end
 ---@param url string
 ---@param batchNum number
 ---@param cacheCapacity number
-GEAnalytics.GEBatchConsumer = class(function(self, url, batchNum, cacheCapacity)
+---@param callback function Global error callback, invoked when report failed; receives (err, client_id)
+GEAnalytics.GEBatchConsumer = class(function(self, url, batchNum, cacheCapacity, callback)
     if url == nil or type(url) ~= "string" or string.len(url) == 0 then
         GELog.error("url can't be empty")
     end
@@ -141,6 +158,7 @@ GEAnalytics.GEBatchConsumer = class(function(self, url, batchNum, cacheCapacity)
     self.eventArrayJson = {}
     self.cacheCapacity = cacheCapacity or GEAnalytics.cacheCapacity
     self.cacheTable = {}
+    self.callback = callback
     GELog.info("Mode: batch consumer.  ReceiverUrl: " .. url)
 end)
 
@@ -191,12 +209,13 @@ function GEAnalytics.GEBatchConsumer:flush(flag)
                 i['client_id'] = client_id
                 i['event_list'] = event_list
                 returnCode, code = Util.post(self.url, i)
-                if (code == 200) then
+                if (code == 200 and returnCode == 0) then
                     success = true
                 else
                     success = false
                     all_ok = false
                     number = number - 1
+                    self:reportError("report failed, returnCode: " .. tostring(returnCode) .. ", httpCode: " .. tostring(code), client_id)
                 end
             end
         end
@@ -223,6 +242,18 @@ end
 function GEAnalytics.GEBatchConsumer:close()
     self:flush(true)
     GELog.info("Close batch consumer")
+end
+
+--- Invoke the global error callback when report failed
+---@param err string|table error
+---@param clientId string|nil
+function GEAnalytics.GEBatchConsumer:reportError(err, clientId)
+    if self.callback ~= nil then
+        local ok, callbackErr = pcall(self.callback, err, clientId)
+        if not ok then
+            GELog.error("error callback failed: " .. tostring(callbackErr))
+        end
+    end
 end
 
 --- Set user properties. Would overwrite existing names
